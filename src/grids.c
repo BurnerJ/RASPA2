@@ -245,7 +245,6 @@ VECTOR MapToUnitCell(VECTOR pos)
 
   switch(BoundaryCondition[CurrentSystem])
   {
-    case CUBIC:
     case RECTANGULAR:
       pos.x-=UnitCellSize[CurrentSystem].x*(REAL)(NINT(pos.x/UnitCellSize[CurrentSystem].x));
       pos.y-=UnitCellSize[CurrentSystem].y*(REAL)(NINT(pos.y/UnitCellSize[CurrentSystem].y));
@@ -297,12 +296,21 @@ VECTOR MapZToBox(VECTOR pos)
   return pos;
 }
 
+static VECTOR AddVectors(VECTOR v1, VECTOR v2)
+{
+  VECTOR result;
+  result.x = v1.x + v2.x;
+  result.y = v1.y + v2.y;
+  result.z = v1.z + v2.z;
+  return result;
+}
+
 void MakeASCIGrid(void)
 {
-  int i,j,k,l,typeA,save;
-  REAL percent,teller,TailEnergy;
+  int i, j, k, l, typeA, save;
+  REAL percent, teller, TailEnergy;
   POINT pos;
-  REAL value,third_derivative;
+  REAL value, third_derivative;
   VECTOR first_derivative;
   REAL_MATRIX3x3 second_derivative;
   char buffer[1024];
@@ -314,115 +322,110 @@ void MakeASCIGrid(void)
     exit(0);
   }
 
-  CurrentSystem=0;
-  if(MIN3(BoxProperties[CurrentSystem].cx,BoxProperties[CurrentSystem].cy,
-          BoxProperties[CurrentSystem].cz)<CutOffVDW)
+  CurrentSystem = 0;
+  if (MIN3(BoxProperties[CurrentSystem].cx, BoxProperties[CurrentSystem].cy,
+           BoxProperties[CurrentSystem].cz) < CutOffVDW)
   {
-     fprintf(stderr, "ERROR:  Cutoff smaller than half of one of the perpendicular boxlengths !!!\n");
-     fprintf(stderr, "        (Cutoff: %lf perpendicular boxlengths: %lf %lf %lf)\n",(double)CutOffVDW,
-             (double)BoxProperties[CurrentSystem].cx,(double)BoxProperties[CurrentSystem].cy,(double)BoxProperties[CurrentSystem].cz);
-     fprintf(stderr, "Advice: choose more unitcells for constructing the grid.\n");
-     exit(0);
+    fprintf(stderr, "ERROR:  Cutoff smaller than half of one of the perpendicular boxlengths !!!\n");
+    fprintf(stderr, "        (Cutoff: %lf perpendicular boxlengths: %lf %lf %lf)\n", (double)CutOffVDW,
+            (double)BoxProperties[CurrentSystem].cx, (double)BoxProperties[CurrentSystem].cy, (double)BoxProperties[CurrentSystem].cz);
+    fprintf(stderr, "Advice: choose more unitcells for constructing the grid.\n");
+    exit(0);
   }
 
-  NumberOfAdsorbateMolecules[CurrentSystem]=0;
-  NumberOfCationMolecules[CurrentSystem]=0;
+  NumberOfAdsorbateMolecules[CurrentSystem] = 0;
+  NumberOfCationMolecules[CurrentSystem] = 0;
 
   CalculateForce();
-  TailEnergy=UTailCorrection[CurrentSystem];
+  TailEnergy = UTailCorrection[CurrentSystem];
 
-  save=ChargeMethod;
-  ChargeMethod=NONE;
+  save = ChargeMethod;
+  ChargeMethod = NONE;
 
-  // compute the size of the grid and the shift of the origin of the enclosing box
-  SizeGrid.x=SizeGrid.y=SizeGrid.z=0.0;
-  ShiftGrid.x=ShiftGrid.y=ShiftGrid.z=0.0;
+  // --- Extract lattice vectors ---
+  VECTOR a = {UnitCellBox[CurrentSystem].ax, UnitCellBox[CurrentSystem].ay, UnitCellBox[CurrentSystem].az};
+  VECTOR b = {UnitCellBox[CurrentSystem].bx, UnitCellBox[CurrentSystem].by, UnitCellBox[CurrentSystem].bz};
+  VECTOR c = {UnitCellBox[CurrentSystem].cx, UnitCellBox[CurrentSystem].cy, UnitCellBox[CurrentSystem].cz};
 
-  SizeGrid.x+=fabs(UnitCellBox[CurrentSystem].ax);
-  SizeGrid.y+=fabs(UnitCellBox[CurrentSystem].ay);
-  SizeGrid.z+=fabs(UnitCellBox[CurrentSystem].az);
-  if(UnitCellBox[CurrentSystem].ax<0.0) ShiftGrid.x+=UnitCellBox[CurrentSystem].ax;
-  if(UnitCellBox[CurrentSystem].ay<0.0) ShiftGrid.y+=UnitCellBox[CurrentSystem].ay;
-  if(UnitCellBox[CurrentSystem].az<0.0) ShiftGrid.z+=UnitCellBox[CurrentSystem].az;
+  // Compute lengths of lattice vectors
+  REAL len_a = sqrt(a.x * a.x + a.y * a.y + a.z * a.z);
+  REAL len_b = sqrt(b.x * b.x + b.y * b.y + b.z * b.z);
+  REAL len_c = sqrt(c.x * c.x + c.y * c.y + c.z * c.z);
 
-  SizeGrid.x+=fabs(UnitCellBox[CurrentSystem].bx);
-  SizeGrid.y+=fabs(UnitCellBox[CurrentSystem].by);
-  SizeGrid.z+=fabs(UnitCellBox[CurrentSystem].bz);
-  if(UnitCellBox[CurrentSystem].bx<0.0) ShiftGrid.x+=UnitCellBox[CurrentSystem].bx;
-  if(UnitCellBox[CurrentSystem].by<0.0) ShiftGrid.y+=UnitCellBox[CurrentSystem].by;
-  if(UnitCellBox[CurrentSystem].bz<0.0) ShiftGrid.z+=UnitCellBox[CurrentSystem].bz;
+  // Determine number of grid points along each lattice vector based on desired spacing
+  NumberOfVDWGridPoints.x = (int)(ceil)(len_a / SpacingVDWGrid);
+  NumberOfVDWGridPoints.y = (int)(ceil)(len_b / SpacingVDWGrid);
+  NumberOfVDWGridPoints.z = (int)(ceil)(len_c / SpacingVDWGrid);
 
-  SizeGrid.x+=fabs(UnitCellBox[CurrentSystem].cx);
-  SizeGrid.y+=fabs(UnitCellBox[CurrentSystem].cy);
-  SizeGrid.z+=fabs(UnitCellBox[CurrentSystem].cz);
-  if(UnitCellBox[CurrentSystem].cx<0.0) ShiftGrid.x+=UnitCellBox[CurrentSystem].cx;
-  if(UnitCellBox[CurrentSystem].cy<0.0) ShiftGrid.y+=UnitCellBox[CurrentSystem].cy;
-  if(UnitCellBox[CurrentSystem].cz<0.0) ShiftGrid.z+=UnitCellBox[CurrentSystem].cz;
+  // Avoid division by zero
+  if (NumberOfVDWGridPoints.x == 0) NumberOfVDWGridPoints.x = 1;
+  if (NumberOfVDWGridPoints.y == 0) NumberOfVDWGridPoints.y = 1;
+  if (NumberOfVDWGridPoints.z == 0) NumberOfVDWGridPoints.z = 1;
 
-  // compute the number of grid points
-  NumberOfVDWGridPoints.x=(int)(SizeGrid.x/SpacingVDWGrid);
-  NumberOfVDWGridPoints.y=(int)(SizeGrid.y/SpacingVDWGrid);
-  NumberOfVDWGridPoints.z=(int)(SizeGrid.z/SpacingVDWGrid);
+  // Compute fractional grid spacing (from 0 to 1)
+  REAL dfi = 1.0 / NumberOfVDWGridPoints.x;
+  REAL dfj = 1.0 / NumberOfVDWGridPoints.y;
+  REAL dfk = 1.0 / NumberOfVDWGridPoints.z;
 
-  DeltaVDWGrid.x=SizeGrid.x/(REAL)NumberOfVDWGridPoints.x;
-  DeltaVDWGrid.y=SizeGrid.y/(REAL)NumberOfVDWGridPoints.y;
-  DeltaVDWGrid.z=SizeGrid.z/(REAL)NumberOfVDWGridPoints.z;
+  fprintf(stderr, "Grid points: %d %d %d\n", NumberOfVDWGridPoints.x, NumberOfVDWGridPoints.y, NumberOfVDWGridPoints.z);
+  fprintf(stderr, "Lattice vector lengths: %g %g %g\n", len_a, len_b, len_c);
 
-  fprintf(stderr, "ShiftGrid: %g %g %g\n",ShiftGrid.x,ShiftGrid.y,ShiftGrid.z);
-  fprintf(stderr, "SizeGrid: %g %g %g\n",SizeGrid.x,SizeGrid.y,SizeGrid.z);
-  fprintf(stderr, "Number of grid points: %d %d %d\n",NumberOfVDWGridPoints.x,NumberOfVDWGridPoints.y,NumberOfVDWGridPoints.z);
+  percent = 100.0 / ((NumberOfVDWGridPoints.x + 1) * NumberOfGrids);
+  teller = 0.0;
 
-  percent=100.0/(REAL)((NumberOfVDWGridPoints.x+1)*NumberOfGrids);
-  teller=0.0;
-
-  fprintf(OutputFilePtr[CurrentSystem],"\n\n");
-  fprintf(OutputFilePtr[CurrentSystem],"Generating an ASCI interpolation grid (%d x %d x %d)\n",NumberOfVDWGridPoints.x,NumberOfVDWGridPoints.y,NumberOfVDWGridPoints.z);
-  fprintf(OutputFilePtr[CurrentSystem],"========================================================\n\n");
+  fprintf(OutputFilePtr[CurrentSystem], "\n\n");
+  fprintf(OutputFilePtr[CurrentSystem], "Generating an ASCI interpolation grid (%d x %d x %d)\n",
+          NumberOfVDWGridPoints.x, NumberOfVDWGridPoints.y, NumberOfVDWGridPoints.z);
+  fprintf(OutputFilePtr[CurrentSystem], "========================================================\n\n");
   fflush(OutputFilePtr[CurrentSystem]);
 
-  mkdir("ASCI_Grids",S_IRWXU);
+  mkdir("ASCI_Grids", S_IRWXU);
 
-  for(l=0;l<NumberOfGrids;l++)
+  for (l = 0; l < NumberOfGrids; l++)
   {
-    fprintf(OutputFilePtr[CurrentSystem],"Creating grid %d [%s]\n",l,PseudoAtoms[GridTypeList[l]].Name);
+    fprintf(OutputFilePtr[CurrentSystem], "Creating grid %d [%s]\n", l, PseudoAtoms[GridTypeList[l]].Name);
     fflush(OutputFilePtr[CurrentSystem]);
 
-    sprintf(buffer,"ASCI_Grids/asci_grid_%s.grid",PseudoAtoms[GridTypeList[l]].Name);
-    FilePtr=fopen(buffer,"w");
+    sprintf(buffer, "ASCI_Grids/asci_grid_%s.grid", PseudoAtoms[GridTypeList[l]].Name);
+    FilePtr = fopen(buffer, "w");
 
-    typeA=GridTypeList[l];
-    for(i=0;i<=NumberOfVDWGridPoints.x;i++)
+    typeA = GridTypeList[l];
+    for (i = 0; i <= NumberOfVDWGridPoints.x; i++)
     {
-      teller=teller+1.0;
-      for(j=0;j<=NumberOfVDWGridPoints.y;j++)
+      teller += 1.0;
+      REAL fi = i * dfi;
+      for (j = 0; j <= NumberOfVDWGridPoints.y; j++)
       {
-        for(k=0;k<=NumberOfVDWGridPoints.z;k++)
+        REAL fj = j * dfj;
+        for (k = 0; k <= NumberOfVDWGridPoints.z; k++)
         {
-          switch(BoundaryCondition[CurrentSystem])
+          REAL fk = k * dfk;
+
+          // Cartesian position = fi*a + fj*b + fk*c
+          pos.x = fi * a.x + fj * b.x + fk * c.x;
+          pos.y = fi * a.y + fj * b.y + fk * c.y;
+          pos.z = fi * a.z + fj * b.z + fk * c.z;
+
+          // Calculate derivatives and energy at pos
+          CalculateDerivativesAtPositionVDW(pos, typeA, &value, &first_derivative, &second_derivative, &third_derivative);
+
+          // Cap the value with criteria
+          if (value < EnergyOverlapCriteria)
           {
-            case CUBIC:
-            case RECTANGULAR:
-            case TRICLINIC:
-            default:
-              pos.x=i*SizeGrid.x/NumberOfVDWGridPoints.x+ShiftGrid.x;
-              pos.y=j*SizeGrid.y/NumberOfVDWGridPoints.y+ShiftGrid.y;
-              pos.z=k*SizeGrid.z/NumberOfVDWGridPoints.z+ShiftGrid.z;
-
-              // apply boundary condition
-              //value=CalculateFrameworkVDWEnergyAtPosition(pos,typeA);
-              CalculateDerivativesAtPositionVDW(pos,typeA,&value,&first_derivative,&second_derivative,&third_derivative);
-              break;
+            fprintf(FilePtr, "%g %g %g %g %g %g %g\n",
+                    pos.x, pos.y, pos.z,
+                    value * ENERGY_TO_KELVIN,
+                    -first_derivative.x * ENERGY_TO_KELVIN,
+                    -first_derivative.y * ENERGY_TO_KELVIN,
+                    -first_derivative.z * ENERGY_TO_KELVIN);
           }
-
-          // cap the value
-          if(value<EnergyOverlapCriteria)
-            fprintf(FilePtr,"%g %g %g %g %g %g %g\n",pos.x,pos.y,pos.z,value*ENERGY_TO_KELVIN,
-                    -first_derivative.x*ENERGY_TO_KELVIN,-first_derivative.y*ENERGY_TO_KELVIN,-first_derivative.z*ENERGY_TO_KELVIN);
           else
-            fprintf(FilePtr,"%g %g %g %s %s %s %s\n",pos.x,pos.y,pos.z,"?","?","?","?");
+          {
+            fprintf(FilePtr, "%g %g %g %s %s %s %s\n", pos.x, pos.y, pos.z, "?", "?", "?", "?");
+          }
         }
       }
-      fprintf(OutputFilePtr[CurrentSystem],"Percentage finished                      : %d\n",(int)(teller*percent));
+      fprintf(OutputFilePtr[CurrentSystem], "Percentage finished                      : %d\n", (int)(teller * percent));
       fflush(OutputFilePtr[CurrentSystem]);
     }
     fclose(FilePtr);
@@ -539,7 +542,6 @@ void MakeGrid(void)
         {
           switch(BoundaryCondition[CurrentSystem])
           {
-            case CUBIC:
             case RECTANGULAR:
             case TRICLINIC:
             default:
@@ -585,20 +587,6 @@ void MakeGrid(void)
     }
     fprintf(stderr, "Writing Grid\n");
     WriteVDWGrid(GridTypeList[l]);
-
-    for(i=0;i<=NumberOfVDWGridPoints.x;i++)
-    {
-      for(j=0;j<=NumberOfVDWGridPoints.y;j++)
-      {
-        for(k=0;k<=NumberOfVDWGridPoints.z;k++)
-        {
-          free(VDWGrid[GridTypeList[l]][i][j][k]);
-        }
-        free(VDWGrid[GridTypeList[l]][i][j]);
-      }
-      free(VDWGrid[GridTypeList[l]][i]);
-    }
-    free(VDWGrid[GridTypeList[l]]);
   }
 
   // compute the number of grid points
@@ -660,7 +648,6 @@ void MakeGrid(void)
       {
         switch(BoundaryCondition[CurrentSystem])
         {
-          case CUBIC:
           case RECTANGULAR:
           case TRICLINIC:
           default:
@@ -754,6 +741,7 @@ int WriteVDWGrid(int l)
       for(j=0;j<=NumberOfVDWGridPoints.y;j++)
         for(k=0;k<=NumberOfVDWGridPoints.z;k++)
           fwrite(&VDWGrid[l][i][j][k][m],1,sizeof(float),FilePtr);
+
 
   fclose(FilePtr);
   return 0;
@@ -1009,7 +997,6 @@ REAL InterpolateVDWGrid(int typeA,VECTOR pos)
 
   switch(BoundaryCondition[CurrentSystem])
   {
-    case CUBIC:
     case RECTANGULAR:
       // the position has to be moved back to the main unit cell using the rectangular boundary condition
       pos.x-=UnitCellSize[CurrentSystem].x*(REAL)(NINT(pos.x/UnitCellSize[CurrentSystem].x));
@@ -1110,7 +1097,6 @@ REAL InterpolateVDWForceGrid(int typeA,VECTOR pos,VECTOR *Force)
 
   switch(BoundaryCondition[CurrentSystem])
   {
-    case CUBIC:
     case RECTANGULAR:
       // the position has to be moved back to the main unit cell using the rectangular boundary condition
       pos.x-=UnitCellSize[CurrentSystem].x*(REAL)(NINT(pos.x/UnitCellSize[CurrentSystem].x));
@@ -1232,7 +1218,6 @@ REAL InterpolateCoulombGrid(int typeA,VECTOR pos)
 
   switch(BoundaryCondition[CurrentSystem])
   {
-    case CUBIC:
     case RECTANGULAR:
       // the position has to be moved back to the main unit cell using the rectangular boundary condition
       pos.x-=UnitCellSize[CurrentSystem].x*(REAL)(NINT(pos.x/UnitCellSize[CurrentSystem].x));
@@ -1330,7 +1315,6 @@ REAL InterpolateCoulombForceGrid(int typeA,VECTOR pos,VECTOR *Force)
 
   switch(BoundaryCondition[CurrentSystem])
   {
-    case CUBIC:
     case RECTANGULAR:
       // the position has to be moved back to the main unit cell using the rectangular boundary condition
       pos.x-=UnitCellSize[CurrentSystem].x*(REAL)(NINT(pos.x/UnitCellSize[CurrentSystem].x));
@@ -1495,7 +1479,6 @@ void TestForceGrid(FILE *FilePtr)
       {
         switch(BoundaryCondition[CurrentSystem])
         {
-          case CUBIC:
           case RECTANGULAR:
             pos.x=Box[CurrentSystem].ax*RandomNumber();
             pos.y=Box[CurrentSystem].by*RandomNumber();
@@ -1691,7 +1674,6 @@ INT_VECTOR3 ConvertXYZPositionToGridIndex(VECTOR pos)
 
   switch(BoundaryCondition[CurrentSystem])
   {
-    case CUBIC:
     case RECTANGULAR:
       // the position has to be moved back to the main unit cell using the rectangular boundary condition
       pos.x-=UnitCellSize[CurrentSystem].x*(REAL)(NINT(pos.x/UnitCellSize[CurrentSystem].x));
